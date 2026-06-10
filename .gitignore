@@ -1,0 +1,21 @@
+# 内部运维文档（含线上服务器 IP，不公开）
+DEPLOYMENT_STATUS.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+api-venv/
+
+# 运行时数据 / 产物
+*.mp4
+*.webm
+data/
+jobs/
+*.log
+
+# 系统
+.DS_Store
+._*

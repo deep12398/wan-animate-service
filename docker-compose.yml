@@ -1,0 +1,51 @@
+# Wan2.2-Animate 商用推理栈
+# comfyui（GPU 推理引擎，内网）  +  api（FastAPI 网关，对 Golang 网关暴露 8000）
+services:
+  comfyui:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.comfyui
+    image: wan-animate-comfyui:latest
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      # 模型（只读）
+      - /data/comfyui-models/diffusion_models:/app/ComfyUI/models/diffusion_models:ro
+      - /data/comfyui-models/text_encoders:/app/ComfyUI/models/text_encoders:ro
+      - /data/comfyui-models/loras:/app/ComfyUI/models/loras:ro
+      - /data/comfyui-models/vae:/app/ComfyUI/models/vae:ro
+      - /data/comfyui-models/clip_vision:/app/ComfyUI/models/clip_vision:ro
+      # 输入/输出（与 api 共享）
+      - /data/comfyui-input:/app/ComfyUI/input
+      - /data/comfyui-output:/app/ComfyUI/output
+    # 只在内网暴露，不映射到公网端口
+    expose:
+      - "8188"
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    image: wan-animate-api:latest
+    restart: unless-stopped
+    depends_on:
+      - comfyui
+    environment:
+      WAN_COMFY_BASE_URL: http://comfyui:8188
+      WAN_COMFY_INPUT_DIR: /data/comfyui-input
+      WAN_COMFY_OUTPUT_DIR: /data/comfyui-output
+      WAN_DATA_DIR: /data/api
+      # 生产填 Collector 地址即可开启 OTLP 上报，不填则打 stdout
+      WAN_OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_ENDPOINT:-}"
+    volumes:
+      - /data/comfyui-input:/data/comfyui-input
+      - /data/comfyui-output:/data/comfyui-output
+      - /data/api:/data/api
+    ports:
+      - "8000:8000"   # 团队 Golang 网关从这里调

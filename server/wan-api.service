@@ -1,0 +1,22 @@
+[Unit]
+Description=Wan2.2-Animate FastAPI gateway
+After=network.target comfyui.service
+Wants=comfyui.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/wan-animate-service
+Environment=WAN_COMFY_BASE_URL=http://127.0.0.1:8188
+Environment=WAN_COMFY_INPUT_DIR=/data/comfyui-input
+Environment=WAN_COMFY_OUTPUT_DIR=/data/comfyui-output
+Environment=WAN_DATA_DIR=/data/api
+Environment=WAN_WORKFLOW_PATH=/root/wan-animate-service/workflow_api.json
+# 生产填 Collector 地址开启 OTLP 上报；留空则打 stdout(journalctl 可查)
+Environment=WAN_OTEL_EXPORTER_OTLP_ENDPOINT=
+ExecStart=/root/api-venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

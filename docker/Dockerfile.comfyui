@@ -1,0 +1,45 @@
+# ComfyUI 无头推理引擎 — Wan2.2-Animate 专用
+# 基础镜像匹配宿主 CUDA 12.8 + 驱动 580
+FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1
+# 国内 pip 走清华源加速
+ENV PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-dev git ffmpeg libgl1 libglib2.0-0 wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# PyTorch 2.8 + cu128（这个走官方源，国内可换 hf-mirror 不适用，保留官方）
+RUN pip install --no-cache-dir torch==2.8.0 torchvision==0.23.0 \
+    --index-url https://download.pytorch.org/whl/cu128
+
+# ComfyUI 主体
+ARG COMFYUI_REF=master
+RUN git clone https://github.com/comfyanonymous/ComfyUI /app/ComfyUI && \
+    cd /app/ComfyUI && git checkout ${COMFYUI_REF} && \
+    pip install --no-cache-dir -r requirements.txt
+
+# 自定义节点：WanVideoWrapper(主) + KJNodes + VideoHelperSuite + controlnet_aux(DWPose) + SAM2
+WORKDIR /app/ComfyUI/custom_nodes
+RUN for repo in \
+      kijai/ComfyUI-WanVideoWrapper \
+      kijai/ComfyUI-KJNodes \
+      kijai/ComfyUI-segment-anything-2 \
+      Kosinkadink/ComfyUI-VideoHelperSuite \
+      Fannovel16/comfyui_controlnet_aux ; do \
+      git clone --depth 1 https://github.com/$repo.git ; \
+    done
+
+# 装各节点依赖（onnxruntime-gpu 供 DWPose；失败不阻断构建，启动时再补）
+RUN for d in ComfyUI-WanVideoWrapper ComfyUI-KJNodes ComfyUI-segment-anything-2 \
+             ComfyUI-VideoHelperSuite comfyui_controlnet_aux ; do \
+      [ -f "$d/requirements.txt" ] && pip install --no-cache-dir -r "$d/requirements.txt" || true ; \
+    done && \
+    pip install --no-cache-dir onnxruntime-gpu
+
+WORKDIR /app/ComfyUI
+EXPOSE 8188
+# 模型与输入输出从外部卷挂载，不打进镜像
+# --listen 127.0.0.1 仅本机：生产环境只让同机的 FastAPI 访问，绝不暴露公网
+CMD ["python3", "main.py", "--listen", "0.0.0.0", "--port", "8188"]

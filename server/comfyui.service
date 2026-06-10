@@ -1,0 +1,22 @@
+[Unit]
+Description=ComfyUI headless inference engine (Wan2.2-Animate)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ComfyUI
+# DWPose/SAM2 等节点会自动从 HuggingFace 拉模型，国内必须走镜像否则卡死
+Environment=HF_ENDPOINT=https://hf-mirror.com
+# 仅监听本机：只让同机 FastAPI 访问，绝不暴露公网
+# 输入/输出目录统一到 /data，与 FastAPI 上传/取产物目录一致
+ExecStart=/root/comfyui-venv/bin/python main.py --listen 127.0.0.1 --port 8188 --input-directory /data/comfyui-input --output-directory /data/comfyui-output
+Restart=on-failure
+RestartSec=5
+# 长耗时推理，给足启动/停止时间
+TimeoutStartSec=300
+StandardOutput=append:/data/comfyui.log
+StandardError=append:/data/comfyui.log
+
+[Install]
+WantedBy=multi-user.target
