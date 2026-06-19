@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from .config import settings
 from .jobs import JobStore
 from .telemetry import init_telemetry, instrument_app
-from .workflow import GenParams
+from .workflow import ASPECT_RATIOS, GenParams
 
 # OTel 必须在建 app 前初始化
 init_telemetry()
@@ -55,19 +55,27 @@ async def create_job(
     image: UploadFile = File(..., description="人物头像图 JPG/PNG"),
     video: UploadFile = File(..., description="驱动舞蹈视频 MP4"),
     prompt: str = Form(settings.default_prompt),
-    width: int = Form(settings.default_width),
-    height: int = Form(settings.default_height),
+    aspect_ratio: str = Form(settings.default_aspect_ratio, description="输出比例: 9:16 / 3:4 / 1:1"),
+    width: int = Form(0, description="高级覆盖: 与 height 同时 >0 才生效，压过 aspect_ratio"),
+    height: int = Form(0, description="高级覆盖: 与 width 同时 >0 才生效，压过 aspect_ratio"),
     frames: int = Form(settings.default_frames),
     seed: int = Form(settings.default_seed),
     steps: int = Form(settings.default_steps),
 ):
     assert store is not None
+    # 校验比例：仅当未走显式 width/height 覆盖时，aspect_ratio 必须合法
+    if not (width > 0 and height > 0) and aspect_ratio not in ASPECT_RATIOS:
+        raise HTTPException(
+            422,
+            f"不支持的 aspect_ratio={aspect_ratio!r}，允许值: {', '.join(ASPECT_RATIOS)}",
+        )
     image_fn = _save_upload(image, "image")
     video_fn = _save_upload(video, "video")
     params = GenParams(
         image_filename=image_fn,
         video_filename=video_fn,
         prompt=prompt,
+        aspect_ratio=aspect_ratio,
         width=width,
         height=height,
         frames=frames,

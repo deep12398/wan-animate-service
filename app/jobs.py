@@ -113,13 +113,15 @@ class JobStore:
 
                 params = GenParams(**job.params)
                 workflow = self._workflow.build(params)
+                primary_node = self._workflow.primary_output_node_id(workflow)
 
                 t_submit = time.time()
                 job.prompt_id = await self._comfy.submit(workflow)
                 self._persist(job)
 
-                result = await self._comfy.wait(job.prompt_id)
-                # 取第一个产物（VHS_VideoCombine 主输出）
+                result = await self._comfy.wait(job.prompt_id, primary_node_id=primary_node)
+                # 取第一个产物：_collect_outputs 已把主输出(带 audio 的 VideoCombine)排在最前，
+                # 不再是先完成的方形人脸裁剪预览。
                 src = result.output_files[0]
                 job.result_path = src
                 job.result_filename = os.path.basename(src)

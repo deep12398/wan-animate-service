@@ -65,15 +65,26 @@ wan-animate-service/
 ### 提交任务
 ```
 POST /api/v1/jobs   (multipart/form-data)
-  image   头像图 (JPG/PNG)         必填
-  video   驱动视频 (MP4)           必填
-  prompt  文本提示                 默认: a person dancing...
-  width   宽   默认 480
-  height  高   默认 832 (竖屏480p)
-  frames  帧数 默认 77 (≈4.8s@16fps)
-  seed    随机种子 默认 42
-  steps   采样步数 默认 6 (lightx2v加速)
+  image         头像图 (JPG/PNG)         必填
+  video         驱动视频 (MP4)           必填
+  prompt        文本提示                 默认: a person dancing...
+  aspect_ratio  输出比例                 默认 9:16 (可选 3:4 / 1:1)
+  frames        帧数 默认 77 (≈4.8s@16fps)
+  seed          随机种子 默认 42
+  steps         采样步数 默认 6 (lightx2v加速)
+  width/height  高级覆盖(可选)：两者都 >0 才生效，压过 aspect_ratio；须能被 16 整除
 → 202 {"job_id": "...", "status": "queued"}
+```
+
+**比例 → 分辨率**（480 宽档）：`9:16`→480×848，`3:4`→480×640，`1:1`→640×640。
+不传 `aspect_ratio` 时默认 `9:16`；传非法值返回 `422` 并列出允许值。
+
+示例（同事直接对接）：
+```bash
+curl -X POST http://<host>:8000/api/v1/jobs \
+  -F image=@头像.jpg -F video=@舞蹈.mp4 \
+  -F aspect_ratio=9:16
+# 3:4 改成 -F aspect_ratio=3:4 即可
 ```
 
 ### 查询状态

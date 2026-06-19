@@ -62,11 +62,16 @@ class ComfyClient:
                 raise ComfyError(f"未拿到 prompt_id: {data}")
             return pid
 
-    async def wait(self, prompt_id: str, timeout_s: int | None = None) -> ComfyResult:
+    async def wait(self, prompt_id: str, timeout_s: int | None = None,
+                   primary_node_id: str | None = None) -> ComfyResult:
         """轮询 /history 直到该 prompt 完成，返回产物路径。
 
         踩坑防御（对应部署文档 8.3）：ComfyUI 可能 status=success 但其实静默跳过了节点、
         没产出视频。所以这里不仅看 history 出现，还要校验 outputs 里确实有视频文件。
+
+        primary_node_id：主输出节点（如带 audio 的 VideoCombine #30）。工作流里常有多个
+        VideoCombine（主成片 + 方形人脸裁剪预览 + 背景预览），指定主节点可保证返回的是成片，
+        而不是先完成的方形人脸预览。
         """
         timeout_s = timeout_s or settings.job_timeout_s
         deadline = asyncio.get_event_loop().time() + timeout_s
@@ -81,7 +86,7 @@ class ComfyClient:
                         if status.get("status_str") == "error":
                             raise ComfyError(f"ComfyUI 执行报错: {status}")
                         if status.get("completed", False) or hist.get("outputs"):
-                            files = self._collect_outputs(hist.get("outputs", {}))
+                            files = self._collect_outputs(hist.get("outputs", {}), primary_node_id)
                             if files:
                                 span.set_attribute("comfy.output_count", len(files))
                                 return ComfyResult(prompt_id, files)
@@ -94,31 +99,56 @@ class ComfyClient:
                     raise ComfyError(f"等待超时 {timeout_s}s (prompt_id={prompt_id})")
                 await asyncio.sleep(settings.poll_interval_s)
 
-    def _collect_outputs(self, outputs: dict) -> list[str]:
+    def _collect_outputs(self, outputs: dict, primary_node_id: str | None = None) -> list[str]:
         """从 history.outputs 里挑出视频产物的实际磁盘路径。
 
-        优先用 ComfyUI 给的 'fullpath'(最可靠，自动兼容 output/temp 目录)；
-        没有时按 type 回退到对应目录拼路径。
+        关键坑（跨容器路径不一致）：ComfyUI 返回的 'fullpath' 是 **comfyui 容器内**的路径
+        (/app/ComfyUI/output/...)，而本服务跑在 **api 容器**里，输出目录挂载点不同
+        (settings.comfy_output_dir)。所以不能直接信 fullpath 去 os.path.exists——
+        必须先按 api 自己的挂载视角(comfy_output_dir + subfolder + filename)解析，fullpath 仅作兜底。
+
+        outputs 按 node_id 分组（key 即节点 id）。若指定了 primary_node_id 且其有产物，
+        把它的产物排在最前，确保 jobs.py 取 [0] 得到的是主成片而非方形人脸预览。
         """
-        files: list[str] = []
-        for node_out in outputs.values():
+        def resolve_path(item: dict) -> str | None:
+            fn = item.get("filename")
+            if not fn or not fn.lower().endswith((".mp4", ".webm", ".gif")):
+                return None
+            subfolder = item.get("subfolder", "") or ""
+            base = (
+                settings.comfy_output_dir
+                if item.get("type") != "temp"
+                else os.path.join(os.path.dirname(settings.comfy_output_dir), "comfyui-temp")
+            )
+            candidates = [os.path.join(base, subfolder, fn)]
+            fp = item.get("fullpath")
+            if fp:
+                # 同容器部署时 fullpath 直接可用；跨容器时再把它的 basename 落到本地输出目录试一次
+                candidates.append(fp)
+                candidates.append(os.path.join(base, subfolder, os.path.basename(fp)))
+            for p in candidates:
+                if p and os.path.exists(p):
+                    return p
+            return None
+
+        def files_of(node_out: dict) -> list[str]:
+            out: list[str] = []
             # VHS_VideoCombine 产物在 'gifs'，SaveVideo 在 'videos'/'images'
             for key in ("gifs", "videos", "images"):
                 for item in node_out.get(key, []) or []:
-                    fn = item.get("filename")
-                    if not fn or not fn.lower().endswith((".mp4", ".webm", ".gif")):
-                        continue
-                    path = item.get("fullpath")
-                    if not path:
-                        base = (
-                            settings.comfy_output_dir
-                            if item.get("type") != "temp"
-                            else os.path.join(os.path.dirname(settings.comfy_output_dir), "comfyui-temp")
-                        )
-                        path = os.path.join(base, item.get("subfolder", ""), fn)
-                    if os.path.exists(path):
-                        files.append(path)
-        return files
+                    p = resolve_path(item)
+                    if p:
+                        out.append(p)
+            # 同一节点内优先带 '-audio' 的最终合流版本
+            out.sort(key=lambda x: 0 if "-audio" in os.path.basename(x) else 1)
+            return out
+
+        primary: list[str] = []
+        others: list[str] = []
+        for nid, node_out in outputs.items():
+            target = primary if (primary_node_id is not None and str(nid) == str(primary_node_id)) else others
+            target.extend(files_of(node_out))
+        return primary + others
 
     async def interrupt(self):
         """中断当前执行（用于取消任务）。"""

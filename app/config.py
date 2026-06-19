@@ -23,8 +23,12 @@ class Settings(BaseSettings):
     poll_interval_s: float = 2.0                   # 轮询 ComfyUI history 间隔
 
     # --- 默认生成参数（可被请求覆盖）---
-    default_width: int = 480
-    default_height: int = 832                       # 竖屏 480p，与文档实测一致
+    # 输出比例：枚举值见 workflow.ASPECT_RATIOS。同事不传 aspect_ratio 时走这个默认。
+    default_aspect_ratio: str = "9:16"              # 竖屏短视频主流比例 (480×848)
+    # width/height 仅作"高级精确覆盖"：两者都 >0 时才生效并压过 aspect_ratio；
+    # 默认 0 = 未设置，走 aspect_ratio 预设。
+    default_width: int = 0
+    default_height: int = 0
     default_frames: int = 77                        # ≈4.8s @16fps
     default_steps: int = 4                          # lightx2v 4 步加速(实测最快)
     default_seed: int = 42
